@@ -1,3 +1,4 @@
+import { useTronlink } from "../contexts/connectTronWalletContext";
 import { balance, build, sign } from "../libs/tronweb";
 import { showProcessModal, showSuccessModal } from "../utils/modals";
 import {
@@ -15,9 +16,25 @@ export const handleTronSwap = async (
   isSwapLoading: boolean,
   setSwapLoading: (value: boolean) => void
 ) => {
-  if (isSwapLoading) return;
+  const { address } = useTronlink();
 
+  if (isSwapLoading) return;
   setSwapLoading(true);
+
+  const userAddress = data.receiver.address;
+
+  showProcessModal("building");
+
+  if (!address) {
+    showProcessModal(
+      "failed",
+      "Connect your Wallet",
+      errorMessages?.walletUnconnected ?? "Error"
+    );
+    setSwapLoading(false);
+    return;
+  }
+
   try {
     const usdtContractAddress = getEnvConfig<string>(
       "tron.usdt.contract_address"
@@ -41,6 +58,25 @@ export const handleTronSwap = async (
     )
       throw new Error("Tron wallet must be connected");
 
+    const userBalance = await balance(
+      window.tron.tronWeb.defaultAddress,
+      window.tron.tronWeb.trx
+    );
+
+    if (!userBalance) return;
+
+    const minbalance = parseInt(getEnvConfig<string>("tron.minimumBalance"));
+
+    if (parseInt(userBalance) < minbalance * 1000000) {
+      // 1000000 SUN = 1 TRX
+      const errorToSend = {
+        info: `Minimum Required balance is ${minbalance} TRX`,
+      };
+      handleApiError(errorToSend, showProcessModal);
+      setSwapLoading(false);
+      return;
+    }
+
     const txFromTronBuildApi = await build(
       window.tron.tronWeb.defaultAddress,
       window.tron.tronWeb.transactionBuilder,
@@ -49,6 +85,10 @@ export const handleTronSwap = async (
       destination,
       data.receiver.address
     );
+
+    if (!txFromTronBuildApi) return;
+
+    showProcessModal("signing");
 
     const result = await sign(
       window.tron.tronWeb.trx,

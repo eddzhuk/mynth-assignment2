@@ -1,5 +1,6 @@
 export const balance = async (address: any, trx: any) => {
   // Logic to get balance using TronWeb
+  return "";
 };
 
 export const build = async (
@@ -11,6 +12,7 @@ export const build = async (
   userAddress: string
 ) => {
   // Logic to build Tron transaction
+  return "";
 };
 
 export const sign = async (

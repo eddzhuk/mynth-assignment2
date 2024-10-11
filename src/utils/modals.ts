@@ -1,7 +1,7 @@
 export const showProcessModal = (
   status: string,
-  title: string,
-  message: string
+  title?: string,
+  message?: string
 ) => {
   // Logic to show process modal
 };

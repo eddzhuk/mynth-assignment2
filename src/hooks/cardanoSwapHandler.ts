@@ -29,12 +29,16 @@ export const handleCardanoSwap = async (
         "Connect your Wallet",
         errorMessages?.walletUnconnected ?? "Error"
       );
+      setSwapLoading(false);
       return;
     }
 
+    showProcessModal("generating");
+
     // Build UTXO logic
     const utxos = await lucid.wallet.getUtxos();
-    if (!utxos.length) {
+    if (!utxos || !utxos.length) {
+      setSwapLoading(false);
       showProcessModal(
         "failed",
         "Insufficient UTXOs",
@@ -43,30 +47,83 @@ export const handleCardanoSwap = async (
       return;
     }
 
+    showProcessModal("building");
+
     const mappedUtxos = utxos.map((item: any) => ({
       ...item,
       assets: mapAssetsToRequestFormat(item.assets),
     }));
 
     // Determine which swap API to call based on token logic
+    const backendBaseUrl = config.get("backend.uri");
     let swapBuildUrl = "";
     let swapBuildData = {};
-    if (data.sender.ticker === "ADA" && data.receiver.ticker === "MyUSD") {
-      const backendBaseUrl = config.get("backend.uri");
+    let swapRequireSignatorie = true;
+
+    const tokenToSwap = data.sender.ticker;
+    const tokenToReceive = data.receiver.ticker;
+
+    if (tokenToSwap === "ADA" && tokenToReceive === "MyUSD") {
+      swapRequireSignatorie = false;
       swapBuildUrl = `${backendBaseUrl}/swap-ada/build`;
       swapBuildData = {
         address: userAddress,
         utxos: mappedUtxos,
         adaAmount: toCardanoTokens(data.sender.amount),
       };
+    } else if (tokenToSwap === "MyUSD" && tokenToReceive === "ADA") {
+      swapRequireSignatorie = false;
+      swapBuildUrl = `${backendBaseUrl}/swap-myusd-ada/build`;
+      swapBuildData = {
+        address: userAddress,
+        utxos: mappedUtxos,
+        amount: toCardanoTokens(data.sender.amount),
+      };
+    } else if (
+      (tokenToSwap === "MyUSD" || tokenToSwap === "IAG") &&
+      (tokenToReceive === "USDT" || tokenToReceive === "USDC")
+    ) {
+      swapBuildUrl = `${backendBaseUrl}/swap/build`;
+      swapBuildData = {
+        address: userAddress,
+        utxos: mappedUtxos,
+        amountToSwap: toCardanoTokens(data.sender.amount),
+        destinationAddress: data.receiver.address,
+        tokenToSwap,
+        tokenToReceive,
+      };
     } else {
-      // Handle other cases...
+      setSwapLoading(false);
+      showProcessModal(
+        "failed",
+        "Unavailable swap",
+        `Swap of ${tokenToSwap} to ${tokenToReceive} is not available at this time, try again later`
+      );
+      return;
     }
 
     const txFromSwapBuildApi = await buildSwap(swapBuildUrl, swapBuildData);
 
+    if (!txFromSwapBuildApi || !txFromSwapBuildApi.tx) return;
+
+    showProcessModal("signing");
+
     // Handle signing and submission
-    let signedTx = await lucid.fromTx(txFromSwapBuildApi.tx).sign().complete();
+    let signedTx;
+    if (!swapRequireSignatorie) {
+      const lucidTx = lucid.fromTx(txFromSwapBuildApi.tx);
+      signedTx = await lucidTx.sign().complete();
+    } else {
+      if (!txFromSwapBuildApi.signature) return;
+      const lucidTx = lucid.fromTx(txFromSwapBuildApi.tx);
+      signedTx = await lucidTx
+        .sign()
+        .assemble([txFromSwapBuildApi.signature])
+        .complete();
+    }
+
+    showProcessModal("submitting");
+
     const transactionID = await signedTx.submit();
 
     showSuccessModal(
